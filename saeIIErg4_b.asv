@@ -1,0 +1,193 @@
+
+%   The input setpoint is in Volts and can vary from 0 to 10 Volts because the position pot is refered to GND
+
+V_7805=5.48;
+Vref_arduino=5;
+
+legacy = false;
+
+if ~exist('a','var')
+    % clear
+    % delete(instrfind({'Port'},{'COM7'}));    
+    if legacy
+        a=arduino('COM3'); % 'COM3' needs to be set manually into the correct port of Arduino
+    else
+        a = arduino;
+    end
+end
+
+% OUTPUT ZERO CONTROL SIGNAL TO STOP MOTOR  %
+if legacy
+    analogWrite(a,6,0);
+    analogWrite(a,9,0);
+else
+    writePWMVoltage(a, 'D6', 0)
+    writePWMVoltage(a, 'D9', 0)
+end
+
+ k1 = 1.6; %ueshs
+ k2 = 0.25;  %taxythtas
+ kz= k1 ; %ref
+
+ %ref = 5
+ P1=10;
+ P2=25;
+ x_hat=zeros(2,1)  %ΠΡΟΣΟΧΗ ΠΙΝΑΚΑΣ (2x1) διότι θα πολλαπλασιαστεί με τον Α(2x2) από τα δεξιά στον x_hat_dot.
+
+
+positionData = [];
+positionDataI = [];
+velocityData = [];
+uData = [];
+timeData = [];
+xData = [];
+
+
+
+% CLOSE ALL PREVIOUS FIGURES FROM SCREEN
+
+close all
+
+% WAIT A KEY TO PROCEED
+disp(['Connect cable from Arduino to Input Power Amplifier and then press enter to start controller']);
+pause()
+
+
+
+%START CLOCK
+tic
+ 
+ t = 0;
+while(t<5)  
+    
+if legacy
+    velocity = analogRead(a,3);
+    position = analogRead(a,5);
+    theta = 3 * Vref_arduino * position / 1023;
+    vtacho = 2 * (2 * velocity * Vref_arduino / 1023 - V_7805);
+    
+else
+    position = readVoltage(a, 'A5'); % position
+    velocity = readVoltage(a,'A3'); % velocity
+    theta = 3 * Vref_arduino * position / 5;
+    vtacho = 2 * (2 * velocity * Vref_arduino / 5 - V_7805);
+   
+end
+    ref=5;
+
+A=[0 1.766; 0 -1.63]; %Πίνακας (2x2)
+B=[0; 1.475];
+C=[1 0];
+W=[1 0; 0 1.766];
+W_inv=inv(W);
+W_hat=[1 0; -1.63 1];
+L=W_inv*W_hat*[P1-1.63; P2];
+%L=[P1-1.63; (-P1+P2*(0.61)+1.63)/(1.077)];
+y=theta; 
+x_hat_dot = A*x_hat + B*u +L*(y-C*x_hat); %ΠΙΝΑΚΑΣ (2x1)
+% x_err = x - x_hat;
+% x_err_dot=(A-L*C)*x_err;
+
+    if t==0
+        x_hat_dot = A*x_hat +L*(y-C*x_hat);
+        x_hat=x_hat_dot*toc; %επειδή την 1η φορά της while δεν έχει προλάβει να γίνει ανάθεση της τιμής toc στο t , για αυτό δεν έχω τίποτα ακόμα στον timeData. 
+    else
+        x_hat_dot = A*x_hat+ B +L*(y-C*x_hat);
+        x_hat = xData(:,end) + x_hat_dot*( toc - timeData(end) ); %toc                         - timeData(end) 
+                                                                %tic(αρχικό) έως toc(τωρινό) - το τελευταίο toc (δηλαδή το προηγούμενο toc)
+    end                                                         %Άρα toc(up to this current loop)-toc(up to the previous loop)= 
+                                                                % =Elapsed time for this current loop           
+                                                                %loop=while(t<5)
+                                                                u = -k1*x_hat(1) -k2*x_hat(2) +kz*ref;
+u = -k1*x_hat(1) -k2*x_hat(2) +kz*ref;
+
+if u > 0
+    if legacy
+        analogWrite(a,6,0);
+        analogWrite(a,9, min(round(e/2 * 255/ Vref_arduino) , 255)); %min is used to saturate
+    else        
+        writePWMVoltage(a, 'D6', 0);
+        writePWMVoltage(a, 'D9', min(abs(u) / 2, 5));
+    end
+else
+     if legacy
+        analogWrite(a,9,0);
+        analogWrite(a,6, min(round(-e/2 * 255/ Vref_arduino) , 255)); %min is used to saturate
+    else        
+        writePWMVoltage(a, 'D9', 0);
+        writePWMVoltage(a, 'D6', min(abs(u) / 2, 5));
+
+     end
+end
+
+
+t=toc;
+
+timeData = [timeData t];
+positionData = [positionData theta];
+velocityData = [velocityData vtacho];
+uData = [uData u];
+positionDataI=[positionDataI ref];
+xData=[xData x_hat]; %θα προστίθεται συνέχεια(εως t<5) πίνακας στο τελευταίο στοιχείο του xData , που ειναι (2x1). 
+                     %δηλ: [[2x1] [2x1] [2x1] [2x1]..] άρα εν τέλει [ 2xN ], όπου Ν το πλήθος των πινάκων (2x1) 
+                     %[2xN]
+
+end
+%{ 
+        xData(1,:) = -P1*theta +vtacho +P1*theta; %theta 
+    else
+         = zData(end) + z_dot*( toc - timeData(end) );
+         end
+       %}
+
+
+% OUTPUT ZERO CONTROL SIGNAL TO STOP MOTOR  %
+if legacy
+    analogWrite(a,6,0);
+    analogWrite(a,9,0);
+else
+    writePWMVoltage(a, 'D6', 0)
+    writePWMVoltage(a, 'D9', 0)
+end
+
+
+disp(['End of control Loop. Press enter to see diagramms']);
+pause();
+
+%% 
+
+figure
+plot(timeData,positionData,timeData,xData(1,:));  %theta  xData(1,:) "πάρε την 1η γραμμή κι " : = ΟΛΕΣ" τις στύλες αυτής της γραμμής.
+title('$position - \hat{x}$', 'Interpreter','latex')
+legend('pos','x_{hat}')
+
+figure
+plot(timeData,positionData);  %theta
+title('position')
+
+figure
+plot(timeData,velocityData);  %vatcho
+title('velocity')
+
+figure
+plot(timeData,velocityData,timeData,xData(2,:));  %vatcho xData(1,:) "πάρε την 2η γραμμή κι " : = ΟΛΕΣ" τις στύλες αυτής της γραμμής.
+title('velocity - x_hat')
+legend('velocity','x_hat')
+
+figure
+plot(timeData,uData);
+title('controller')
+
+figure
+plot(timeData,positionData); %theta τρέχουσα θέση
+hold on 
+plot(timeData,positionDataI); %ref επιθυμητή θέση
+title('position-reference')
+legend('pos', 'ref')
+%% 
+
+disp('Disonnect cable from Arduino to Input Power Amplifier and then press enter to stop controller');
+pause();
+
+
+
